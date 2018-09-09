@@ -1,0 +1,176 @@
+task buildAll << {
+    File dstDir = new File(buildDir, "all")
+    dstDir.mkdirs()
+    
+    copy {
+        into new File(dstDir, "svnkit-${project.version}")
+        into('lib') {
+            from configurations.binaries.files
+            exclude '**/*.asc'
+            eachFile { f ->
+                f.name = build_jar_name(f.file)
+            }
+            
+        }
+        into ('bin') {
+            from project(':svnkit-cli').file('build/scripts')
+            exclude '**/logging.properties'
+        } 
+        into('src') {
+            from configurations.sources.files
+        }
+        into('licenses') {
+            from file('src/main/licenses')
+        }
+        into ('conf') {
+            from project(':svnkit-cli').file('build/scripts')
+            include '**/logging.properties'
+            rename { String filename -> return filename + '.disabled' }            
+        }
+        
+        from rootProject.files('LICENSE.txt', 'README.txt', 'CHANGES.txt')
+    }
+    
+    File destfile = new File(distsDir, "org.tmatesoft.svn_${project.version}.standalone.zip")
+    ant.zip(destfile: destfile.absolutePath) {
+        zipfileset(dir: dstDir.absolutePath, excludes: '**/bin/**')
+        zipfileset(dir: dstDir.absolutePath, includes: '**/bin/**', excludes: '**/bin/*.bat', filemode: '755')
+        zipfileset(dir: dstDir.absolutePath, includes: '**/bin/*.bat')
+    }
+    File destfileNoJNA = new File(distsDir, "org.tmatesoft.svn_${project.version}.standalone.nojna.zip")
+    ant.zip(destfile: destfileNoJNA.absolutePath) {
+        zipfileset(dir: dstDir.absolutePath, excludes: '**/bin/**,**/jna*,**/platform*,**/jsch*,**/LICENSE-JNA.txt,**/LICENSE-JSCH.txt')
+        zipfileset(dir: dstDir.absolutePath, includes: '**/bin/**', excludes: '**/bin/*.bat', filemode: '755')
+        zipfileset(dir: dstDir.absolutePath, includes: '**/bin/*.bat')
+    }
+}
+
+task buildSources(type: Zip) {
+    archiveName = "org.tmatesoft.svn_${project.version}.src.zip"
+
+    into("svnkit-${project.version}")
+
+    from rootProject.rootDir
+
+    exclude '.*'
+    exclude '**/.*'
+    exclude '**/.*/**'
+
+    exclude '**/build/**'
+    exclude '**/bin/**'
+    exclude '**/target/**'
+}
+
+task buildUpdateSite << {
+    def tokens = new HashMap()
+    def files = new HashMap()
+    File siteDir = new File(buildDir, 'site')
+    File pluginsDir = new File(siteDir, 'plugins')
+    File featuresDir = new File(siteDir, 'features')
+    pluginsDir.mkdirs()
+    
+    configurations.osgi.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+        if (artifact.file.name.endsWith('.zip') || artifact.file.name.endsWith('.jar')) {
+            name = artifact.name
+            if (name == 'org.tmatesoft.svnkit') {
+                name = 'svnkit_osgi'
+            }
+            files[name] = artifact.file
+        }
+    }
+    files.each { n,file -> 
+        String name = n
+        name = name.replace('-', '_')
+        def manifestProperties = read_manifest(file)
+        if (manifestProperties['Bundle-Version'] == null) {
+            return
+        }
+        tokens[name + '_version'] = manifestProperties['Bundle-Version']
+
+        def pattern = java.util.regex.Pattern.compile("\\d+\\.\\d+\\.\\d+_.+")
+        def matcher = pattern.matcher(tokens[name + '_version'])
+        if (matcher.matches()) {
+            tokens[name + '_version'] = tokens[name + '_version'].replaceFirst("_", ".")
+        }
+        tokens[name + '_name'] = manifestProperties['Bundle-SymbolicName']
+        tokens[name + '_fullName'] = tokens[name + '_name'] + '_' + tokens[name + '_version'] + '.jar'
+        copy {
+           from file
+           into pluginsDir
+           eachFile { f ->
+               f.name = tokens[name + '_fullName']
+           }
+        }
+    }
+    copy {
+        into siteDir
+        from 'src/main/update-site'
+        include 'site.xml'
+        expand(tokens)
+    }
+    file('src/main/update-site/features').listFiles().each {
+        if (it.isDirectory()) {
+            String fullName = tokens[it.name.replace('-', '_') + '_fullName']
+            if (fullName != null) {
+                makeFeatureJar(it, new File(featuresDir, fullName), tokens)
+            }
+        }
+    }
+
+    distsDir.mkdirs()
+    File destfile = new File(distsDir, "org.tmatesoft.svn_${project.version}.eclipse.zip")
+    ant.zip(destfile: destfile.absolutePath, basedir: siteDir.absolutePath)
+}
+
+def makeFeatureJar(File dir, File dstFile, Map tokens) {
+    def tmpDir = new File(buildDir, 'tmp/' + dstFile.getName())
+    tmpDir.mkdirs()
+    copy {
+        into tmpDir
+        from dir
+        expand(tokens)
+    }
+    ant.jar(destfile: dstFile.absolutePath, basedir: tmpDir.absolutePath)
+    
+}
+
+buildAll.dependsOn tasks.clean
+buildAll.dependsOn configurations.binaries
+buildAll.dependsOn configurations.sources
+buildAll.dependsOn(':svnkit-cli:jar')
+buildUpdateSite.dependsOn(':svnkit-osgi:jar')
+
+//buildUpdateSite.dependsOn configurations.osgi
+build {
+    dependsOn buildAll, buildSources, buildUpdateSite
+}
+//task build(dependsOn: [buildAll, buildUpdateSite, buildSources])
+
+import java.util.jar.*
+
+def read_manifest(file) {
+    def result = [:]
+    result['File-Name'] = file.getName()
+    def jar = new JarFile(file)
+    try {
+        def manifest = jar.getManifest()
+        if (manifest != null) {
+            manifest.getMainAttributes().each { k,v -> result.put(k.toString(), v) }
+        }
+    } finally {
+        jar.close()
+    }
+    return result
+}
+
+def build_jar_name(file) {
+    def fileProps = read_manifest(file)
+    def fileBuildVersion = fileProps.get('Build-Version')
+    def fileBuildNumber = fileProps.get('Build-Number')
+    if (fileBuildVersion != null && (fileBuildVersion.endsWith('-SNAPSHOT') || fileBuildVersion.endsWith('-EAP'))) {
+        if (fileBuildNumber != null) {
+            return file.name.substring(0, file.name.length() - '.jar'.length()) + '_' + fileBuildNumber + '.jar'
+        }
+    }
+    return file.name
+}

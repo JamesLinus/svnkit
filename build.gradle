@@ -1,0 +1,421 @@
+group = 'org.tmatesoft.svnkit'
+version = '1.10.0'
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '2.14'
+}
+
+def javaProjects() {
+    return subprojects - project(':svnkit-distribution')
+}
+
+ext {
+   release = false
+   target = '1.6'
+   compatibleSvnVersion = '1.10.0'
+
+   if (!release) {
+       rootProject.version = rootProject.version + '-SNAPSHOT'
+   }
+   buildNumber = project.hasProperty('revision') ? ('r' + project.revision) : null
+   if (buildNumber == null) {
+        if (release) {
+            throw new GradleException('release or interim targets requires build number to be specified via revision project property (-Prevision=REV)')
+        }
+        def buildTime = new java.text.SimpleDateFormat("yyyyMMddHHmmss", java.util.Locale.US).format(new Date())
+        buildNumber = 't' + buildTime
+   }
+   println "Version: ${rootProject.version}"
+   println "Build Number: ${rootProject.buildNumber}"
+}
+
+allprojects {
+    repositories {
+        mavenCentral()
+        maven {
+            url 'https://maven.tmatesoft.com/content/repositories/releases'
+        }
+        maven {
+            url 'https://maven.tmatesoft.com/content/repositories/snapshots'
+        }
+    }
+}
+
+subprojects {
+    apply plugin : 'base'
+    apply plugin : 'maven'
+    apply plugin : 'signing'
+
+    version = rootProject.version
+
+    ext {
+       release = rootProject.release
+       target = rootProject.target
+       compatibleSvnVersion = rootProject.compatibleSvnVersion
+
+       buildVersion = [
+           baseVersion : '1.9.2',
+           buildNumber : buildNumber,
+           major: '1',
+           minor: '9',
+           micro: '2'
+       ]
+       buildNumber = rootProject.buildNumber
+    }
+
+    signing {
+        required { project.hasProperty('signing.keyId') }
+        sign configurations.archives
+    }
+
+    uploadArchives {
+        dependsOn signArchives
+        enabled = false
+        repositories.mavenDeployer {
+            beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
+
+            if (project.hasProperty('mavenReleasesRepository')) {
+                repository( url : "${mavenReleasesRepository}") {
+                    if (project.hasProperty('mavenUser')) {
+                        authentication(userName: "${mavenUser}", password: "${mavenPassword}")
+                    }
+                }
+            }
+
+            if (project.hasProperty('mavenSnapshotsRepository')) {
+                snapshotRepository( url : "${mavenSnapshotsRepository}") {
+                    if (project.hasProperty('mavenUser')) {
+                        authentication(userName: "${mavenUser}", password: "${mavenPassword}")
+                    }
+                }
+            }
+        }
+    }
+}
+
+configure(javaProjects()) {
+    apply plugin : 'java'
+
+    sourceCompatibility = target
+    targetCompatibility = target
+
+    configurations {
+        sources
+        javadocs
+        jar_archive
+    }
+
+    task sourcesJar(type: Jar) {
+        description = 'Builds Java Sources Jar'
+        from sourceSets.main.java.srcDirs
+        classifier = 'sources'
+    }
+
+    task javadocJar(type: Jar, dependsOn: javadoc) {
+        description="Builds Javadoc Jar"
+        from "$docsDir/javadoc"
+        classifier = 'javadoc'
+    }
+
+    jar {
+        metaInf {
+            from rootProject.file('LICENSE.txt')
+        }
+    }
+
+    artifacts { sources sourcesJar }
+}
+
+project(':svnkit') {
+    dependencies {
+        compile 'de.regnis.q.sequence:sequence-library:1.0.3'
+        compile 'org.tmatesoft.sqljet:sqljet:1.1.11'
+        compile 'net.java.dev.jna:jna:4.1.0'
+        compile 'net.java.dev.jna:jna-platform:4.1.0'
+        compile 'com.trilead:trilead-ssh2:1.0.0-build221'
+        compile('com.jcraft:jsch.agentproxy.connector-factory:0.0.7') {
+            exclude group: 'net.java.dev.jna'
+        }
+        compile 'com.jcraft:jsch.agentproxy.svnkit-trilead-ssh2:0.0.7'
+        compile 'org.lz4:lz4-java:1.4.1'
+
+        testCompile 'junit:junit:4.8'
+    }
+    artifacts { 
+        archives jar, sourcesJar, javadocJar
+        jar_archive jar
+    }
+
+    uploadArchives {
+        enabled = true
+        repositories.mavenDeployer {
+            pom.artifactId = 'svnkit'
+            pom.groupId = 'org.tmatesoft.svnkit'
+            pom.project {
+                name "SVNKit Java(tm) Subversion Library"
+                description "Java(tm) library to manage Subversion working copies and repositories"
+                url "https://svnkit.com/"
+
+                scm {
+                    url "https://svn.tmatesoft.com/repos/svnkit"
+                    connection "scm:svn:https://svn.tmatesoft.com/repos/svnkit"
+                    developerConnection "scm:svn:https://svn.tmatesoft.com/repos/svnkit"
+                }
+                organization {
+                    name "TMate Software"
+                    url "https://svnkit.com/"
+                }
+                developers {
+                    developer {
+                        id "alexander.kitaev"
+                        email "support@svnkit.com"
+                        name "Alexander Kitaev"
+                        roles {
+                            role "developer"
+                        }
+                    }
+                }
+                licenses {
+                    license {
+                        name "TMate Open Source License"
+                        url "https://svnkit.com/license.html"
+                        distribution "repos"
+                        comments "GPL-like license with a dual-licensing option for closed source usage"
+                    }
+                }
+
+            }
+        }
+    }
+}
+
+project(':svnkit-javahl16') {
+    dependencies {
+        compile project(path: ':svnkit')
+        compile 'org.apache.subversion:svn-javahl-api:1.9.3-SNAPSHOT'
+
+        testCompile 'org.apache.subversion:svn-javahl-tests:1.9.3-SNAPSHOT'
+    }
+    artifacts { 
+        archives jar, sourcesJar, javadocJar 
+        jar_archive jar
+    }
+    uploadArchives {
+        enabled = true
+        repositories.mavenDeployer {
+            pom.artifactId = 'svnkit-javahl16'
+            pom.groupId = 'org.tmatesoft.svnkit'
+            pom.project {
+                name "SVNKit Java(tm) Subversion JavaHL API implementation"
+                description "SVNKit Java(tm) Subversion JavaHL API implementation"
+                url "https://svnkit.com/"
+
+                scm {
+                    url "https://svn.tmatesoft.com/repos/svnkit"
+                    connection "scm:svn:https://svn.tmatesoft.com/repos/svnkit"
+                    developerConnection "scm:svn:https://svn.tmatesoft.com/repos/svnkit"
+                }
+                organization {
+                    name "TMate Software"
+                    url "https://svnkit.com/"
+                }
+                developers {
+                    developer {
+                        id "alexander.kitaev"
+                        email "support@svnkit.com"
+                        name "Alexander Kitaev"
+                        roles {
+                            role "developer"
+                        }
+                    }
+                }
+                licenses {
+                    license {
+                        name "TMate Open Source License"
+                        url "https://svnkit.com/license.html"
+                        distribution "repos"
+                        comments "GPL-like license with a dual-licensing option for closed source usage"
+                    }
+                }
+
+            }
+        }
+    }
+}
+
+project(':svnkit-cli') {
+    dependencies {
+        compile project(path: ':svnkit')
+    }
+    artifacts { 
+        archives jar, sourcesJar, javadocJar 
+    }
+    uploadArchives {
+        enabled = true
+        repositories.mavenDeployer {
+            pom.artifactId = 'svnkit-cli'
+            pom.groupId = 'org.tmatesoft.svnkit'
+            pom.project {
+                name "SVNKit based Subversion command line client"
+                description "SVNKit based Subversion command line client"
+                url "https://svnkit.com/"
+
+                scm {
+                    url "https://svn.tmatesoft.com/repos/svnkit"
+                    connection "scm:svn:https://svn.tmatesoft.com/repos/svnkit"
+                    developerConnection "scm:svn:https://svn.tmatesoft.com/repos/svnkit"
+                }
+                organization {
+                    name "TMate Software"
+                    url "https://svnkit.com/"
+                }
+                developers {
+                    developer {
+                        id "alexander.kitaev"
+                        email "support@svnkit.com"
+                        name "Alexander Kitaev"
+                        roles {
+                            role "developer"
+                        }
+                    }
+                }
+                licenses {
+                    license {
+                        name "TMate Open Source License"
+                        url "https://svnkit.com/license.html"
+                        distribution "repos"
+                        comments "GPL-like license with a dual-licensing option for closed source usage"
+                    }
+                }
+
+            }
+        }
+    }
+}
+
+project(':svnkit-dav') {
+    apply plugin: 'war'
+
+    dependencies {
+        compile project(path: ':svnkit')
+        compile 'javax.servlet:servlet-api:2.5'
+    }
+    artifacts { archives war }
+
+    uploadArchives {
+        enabled = true
+        repositories.mavenDeployer {
+            pom.artifactId = 'svnkit-dav'
+            pom.groupId = 'org.tmatesoft.svnkit'
+            pom.project {
+                name "SVNKit based Subversion HTTP server (servlet)"
+                description "SVNKit based Subversion HTTP server (servlet)"
+                url "https://svnkit.com/"
+
+                scm {
+                    url "https://svn.tmatesoft.com/repos/svnkit"
+                    connection "scm:svn:https://svn.tmatesoft.com/repos/svnkit"
+                    developerConnection "scm:svn:https://svn.tmatesoft.com/repos/svnkit"
+                }
+                organization {
+                    name "TMate Software"
+                    url "https://svnkit.com/"
+                }
+                developers {
+                    developer {
+                        id "alexander.kitaev"
+                        email "support@svnkit.com"
+                        name "Alexander Kitaev"
+                        roles {
+                            role "developer"
+                        }
+                    }
+                }
+                licenses {
+                    license {
+                        name "TMate Open Source License"
+                        url "https://svnkit.com/license.html"
+                        distribution "repos"
+                        comments "GPL-like license with a dual-licensing option for closed source usage"
+                    }
+                }
+
+            }
+        }
+    }
+}
+
+project(':svnkit-test') {
+    dependencies {
+        compile project(path: ':svnkit-cli')
+    }
+    sourcesJar.enabled=false
+}
+
+project(':svnkit-osgi') {
+    sourcesJar.enabled=false
+    artifacts { archives jar }
+    uploadArchives {
+        enabled = true
+        repositories.mavenDeployer {
+            pom.artifactId = 'svnkit-osgi'
+            pom.groupId = 'org.tmatesoft.svnkit'
+            pom.whenConfigured { p ->
+                p.dependencies.clear()
+            }
+        }
+    }
+}
+
+project(':svnkit-distribution') {
+    configurations {
+        binaries
+        sources
+        osgi
+    }
+
+    dependencies {
+        binaries project(path: ':svnkit')
+        binaries project(path: ':svnkit-cli')
+        binaries project(path: ':svnkit-javahl16', configuration: 'archives')
+
+        sources project(path: ':svnkit', configuration: 'sources')
+        sources project(path: ':svnkit-cli', configuration: 'sources')
+        sources project(path: ':svnkit-javahl16', configuration: 'sources')
+
+        osgi project(path: ':svnkit-osgi', configuration: 'archives')
+        osgi 'com.trilead:trilead-ssh2-osgi:1.0.0-build221'
+        osgi 'org.tmatesoft.sqljet:sqljet-osgi:1.1.11'
+        osgi 'net.java.dev.jna:jna-osgi:4.1.0'
+    }
+}
+
+import java.util.jar.*
+
+def read_manifest(file) {
+    println "reading manifest of ${file}"
+    def result = [:]
+    result['File-Name'] = file.getName()
+    def jar = new JarFile(file)
+    try {
+        def manifest = jar.getManifest()
+        if (manifest != null) {
+            manifest.getMainAttributes().each { k,v -> result.put(k.toString(), v) }
+        }
+    } finally {
+        jar.close()
+    }
+    return result
+}
+
+def build_jar_name(file) {
+    def fileProps = read_manifest(file)
+    def fileBuildVersion = fileProps.get('Build-Version')
+    def fileBuildNumber = fileProps.get('Build-Number')
+    if (fileBuildVersion != null && (fileBuildVersion.endsWith('-SNAPSHOT') || fileBuildVersion.endsWith('-EAP'))) {
+        if (fileBuildNumber != null) {
+            return file.name.substring(0, file.name.length() - '.jar'.length()) + '_' + fileBuildNumber + '.jar'
+        }
+    }
+    return file.name
+}

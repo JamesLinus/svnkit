@@ -1,0 +1,61 @@
+project.ext.packageName = 'org.tmatesoft.svn.cli'
+project.ext.scripts = ['jsvn' : "${packageName}.SVN",  
+           'jsvnadmin' : "${packageName}.SVNAdmin", 
+           'jsvndumpfilter' : "${packageName}.SVNDumpFilter", 
+           'jsvnlook' : "${packageName}.SVNLook", 
+           'jsvnsync' : "${packageName}.SVNSync", 
+           'jsvnversion' : "${packageName}.SVNVersion"]
+
+import org.apache.tools.ant.filters.*;
+ 
+jar << {
+    
+    File scriptsDir = file('build/scripts')
+    scriptsDir.mkdirs()
+    
+    def classpath = []
+    configurations.compile.files.each {
+        classpath += build_jar_name(it)
+    }
+    classpath += jar.archiveName
+    project.ext.script_classpath = classpath
+    
+    scripts.keySet().each { scriptName ->
+        def mainclassName = scripts[scriptName]
+        copy {
+            from file("src/main/scripts/jsvn")
+            into scriptsDir
+
+            expand(project: project, classpath_property: 'script_classpath', mainclass : mainclassName)
+            filter(FixCrLfFilter.class, eol:FixCrLfFilter.CrLf.newInstance("lf"))
+            fileMode 0755
+
+            eachFile {
+                it.name = scriptName
+            }
+        }
+        copy {
+            from file("src/main/scripts/jsvn.bat")
+            into scriptsDir
+
+            expand(project: project, classpath_property: 'script_classpath', mainclass : mainclassName)
+            filter(FixCrLfFilter.class, eol:FixCrLfFilter.CrLf.newInstance("crlf"))
+
+            eachFile {
+                it.name = scriptName + '.bat'
+            }
+        }
+    }
+    
+    copy {
+        from file("src/main/scripts/jsvnsetup.openvms")
+        into scriptsDir
+        filter {
+            expand(project: project, classpath_property: 'script_classpath')
+        }
+    }
+    copy {
+        from file("src/main/conf/logging.properties")
+        into scriptsDir
+    }
+}
